@@ -1,50 +1,48 @@
 """Support for KNX/IP buttons."""
+
 from __future__ import annotations
 
-from xknx import XKNX
 from xknx.devices import RawValue as XknxRawValue
 
+from homeassistant import config_entries
 from homeassistant.components.button import ButtonEntity
-from homeassistant.const import CONF_ENTITY_CATEGORY, CONF_NAME
+from homeassistant.const import CONF_ENTITY_CATEGORY, CONF_NAME, CONF_PAYLOAD, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_PAYLOAD, CONF_PAYLOAD_LENGTH, DOMAIN, KNX_ADDRESS
-from .knx_entity import KnxEntity
+from . import KNXModule
+from .const import CONF_PAYLOAD_LENGTH, KNX_ADDRESS, KNX_MODULE_KEY
+from .entity import KnxYamlEntity
 
 
-async def async_setup_platform(
+async def async_setup_entry(
     hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
+    config_entry: config_entries.ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up buttons for KNX platform."""
-    if not discovery_info or not discovery_info["platform_config"]:
-        return
-    platform_config = discovery_info["platform_config"]
-    xknx: XKNX = hass.data[DOMAIN].xknx
+    """Set up the KNX binary sensor platform."""
+    knx_module = hass.data[KNX_MODULE_KEY]
+    config: list[ConfigType] = knx_module.config_yaml[Platform.BUTTON]
 
-    async_add_entities(
-        KNXButton(xknx, entity_config) for entity_config in platform_config
-    )
+    async_add_entities(KNXButton(knx_module, entity_config) for entity_config in config)
 
 
-class KNXButton(KnxEntity, ButtonEntity):
+class KNXButton(KnxYamlEntity, ButtonEntity):
     """Representation of a KNX button."""
 
     _device: XknxRawValue
 
-    def __init__(self, xknx: XKNX, config: ConfigType) -> None:
+    def __init__(self, knx_module: KNXModule, config: ConfigType) -> None:
         """Initialize a KNX button."""
         super().__init__(
+            knx_module=knx_module,
             device=XknxRawValue(
-                xknx,
+                xknx=knx_module.xknx,
                 name=config[CONF_NAME],
                 payload_length=config[CONF_PAYLOAD_LENGTH],
                 group_address=config[KNX_ADDRESS],
-            )
+            ),
         )
         self._payload = config[CONF_PAYLOAD]
         self._attr_entity_category = config.get(CONF_ENTITY_CATEGORY)

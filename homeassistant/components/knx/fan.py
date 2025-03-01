@@ -1,56 +1,56 @@
 """Support for KNX/IP fans."""
+
 from __future__ import annotations
 
 import math
 from typing import Any, Final
 
-from xknx import XKNX
 from xknx.devices import Fan as XknxFan
 
-from homeassistant.components.fan import SUPPORT_OSCILLATE, SUPPORT_SET_SPEED, FanEntity
-from homeassistant.const import CONF_ENTITY_CATEGORY, CONF_NAME
+from homeassistant import config_entries
+from homeassistant.components.fan import FanEntity, FanEntityFeature
+from homeassistant.const import CONF_ENTITY_CATEGORY, CONF_NAME, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.util.percentage import (
-    int_states_in_range,
     percentage_to_ranged_value,
     ranged_value_to_percentage,
 )
+from homeassistant.util.scaling import int_states_in_range
 
-from .const import DOMAIN, KNX_ADDRESS
-from .knx_entity import KnxEntity
+from . import KNXModule
+from .const import KNX_ADDRESS, KNX_MODULE_KEY
+from .entity import KnxYamlEntity
 from .schema import FanSchema
 
 DEFAULT_PERCENTAGE: Final = 50
 
 
-async def async_setup_platform(
+async def async_setup_entry(
     hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
+    config_entry: config_entries.ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up fans for KNX platform."""
-    if not discovery_info or not discovery_info["platform_config"]:
-        return
-    platform_config = discovery_info["platform_config"]
-    xknx: XKNX = hass.data[DOMAIN].xknx
+    """Set up fan(s) for KNX platform."""
+    knx_module = hass.data[KNX_MODULE_KEY]
+    config: list[ConfigType] = knx_module.config_yaml[Platform.FAN]
 
-    async_add_entities(KNXFan(xknx, entity_config) for entity_config in platform_config)
+    async_add_entities(KNXFan(knx_module, entity_config) for entity_config in config)
 
 
-class KNXFan(KnxEntity, FanEntity):
+class KNXFan(KnxYamlEntity, FanEntity):
     """Representation of a KNX fan."""
 
     _device: XknxFan
 
-    def __init__(self, xknx: XKNX, config: ConfigType) -> None:
+    def __init__(self, knx_module: KNXModule, config: ConfigType) -> None:
         """Initialize of KNX fan."""
         max_step = config.get(FanSchema.CONF_MAX_STEP)
         super().__init__(
+            knx_module=knx_module,
             device=XknxFan(
-                xknx,
+                xknx=knx_module.xknx,
                 name=config[CONF_NAME],
                 group_address_speed=config.get(KNX_ADDRESS),
                 group_address_speed_state=config.get(FanSchema.CONF_STATE_ADDRESS),
@@ -61,7 +61,7 @@ class KNXFan(KnxEntity, FanEntity):
                     FanSchema.CONF_OSCILLATION_STATE_ADDRESS
                 ),
                 max_step=max_step,
-            )
+            ),
         )
         # FanSpeedMode.STEP if max_step is set
         self._step_range: tuple[int, int] | None = (1, max_step) if max_step else None
@@ -78,12 +78,16 @@ class KNXFan(KnxEntity, FanEntity):
             await self._device.set_speed(percentage)
 
     @property
-    def supported_features(self) -> int:
+    def supported_features(self) -> FanEntityFeature:
         """Flag supported features."""
-        flags = SUPPORT_SET_SPEED
+        flags = (
+            FanEntityFeature.SET_SPEED
+            | FanEntityFeature.TURN_ON
+            | FanEntityFeature.TURN_OFF
+        )
 
         if self._device.supports_oscillation:
-            flags |= SUPPORT_OSCILLATE
+            flags |= FanEntityFeature.OSCILLATE
 
         return flags
 
@@ -108,7 +112,6 @@ class KNXFan(KnxEntity, FanEntity):
 
     async def async_turn_on(
         self,
-        speed: str | None = None,
         percentage: int | None = None,
         preset_mode: str | None = None,
         **kwargs: Any,
